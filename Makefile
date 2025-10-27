@@ -10,7 +10,7 @@ bin/mbas: tmp/mbas.o tmp/tomlc17.o
 	cc tmp/mbas.o tmp/tomlc17.o -o bin/mbas
 	chmod +x bin/mbas
 
-tmp/mbas.o: src/main.c
+tmp/mbas.o: src/main.c src/*
 	mkdir -p tmp
 	cc -c src/main.c -o tmp/mbas.o
 
@@ -28,7 +28,7 @@ bin/mbas_debug: tmp/mbas_debug.o tmp/tomlc17.o
 	cc -g tmp/mbas_debug.o tmp/tomlc17.o -o bin/mbas_debug 
 	chmod +x bin/mbas_debug
 
-tmp/mbas_debug.o: src/main.c
+tmp/mbas_debug.o: src/main.c src/*
 	echo "#define DEBUG \n" | cat - src/main.c > src/main_debug.c
 	mkdir -p tmp
 	cc -g -c src/main_debug.c -o tmp/mbas_debug.o
@@ -45,3 +45,4 @@ tmp/tomlc17.o: deps/tomlc17/tomlc17.c
 # ==============================
 clean:
 	rm -rf bin
+	rm -rf tmp
