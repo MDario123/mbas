@@ -52,3 +52,10 @@ When finished playing a step:
 ```sh
 make build
 ```
+
+## TODO
+
+- [ ] Implement MIDI mode.
+- [ ] Implement ALSA and PulseAudio backends.
+- [ ] Add error handling and logging.
+- [ ] Add hot-reloading of configuration.
