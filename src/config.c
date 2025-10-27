@@ -28,75 +28,121 @@ struct Config {
 
 typedef struct Config Config;
 
-Config load_config() {
-  // Initialize empty config
-  Config config;
+struct load_config_result_t {
+  int code;
+  char *errmsg;
+};
+
+typedef struct load_config_result_t load_config_result_t;
+
+enum {
+  LOAD_CONFIG_SUCCESS = 0,
+  LOAD_CONFIG_FILE_LOAD_ERROR = -1,
+  LOAD_CONFIG_PARSE_ERROR = -2,
+  LOAD_CONFIG_INVALID_OPTION_VALUE = -3,
+};
+
+toml_datum_t toml_seek_typed(toml_datum_t root, const char *option_name,
+                             toml_type_t exp_type, load_config_result_t *ret) {
+  toml_datum_t datum = toml_seek(root, option_name);
+
+  if (datum.type != exp_type) {
+    ret->code = LOAD_CONFIG_INVALID_OPTION_VALUE;
+    size_t buf_size = 128;
+    ret->errmsg = (char *)malloc(buf_size);
+    snprintf(ret->errmsg, buf_size,
+             "Error: '%s' has invalid type in config file.", option_name);
+  }
+
+  return datum;
+}
+
+load_config_result_t load_config_file(Config *config, const char *path) {
+  load_config_result_t ret = {0};
+  ret.code = LOAD_CONFIG_SUCCESS;
+
+  FILE *file = fopen(path, "r");
+
+  if (!file) {
+    ret.code = LOAD_CONFIG_FILE_LOAD_ERROR;
+    ret.errmsg = strdup("Failed to open config file.");
+    goto end;
+  }
 
   // Parse the config file
-  toml_result_t result = toml_parse_file_ex(CONFIG_FILE_PATH);
+  toml_result_t result = toml_parse_file(file);
 
   // Check for parsing errors
   if (!result.ok) {
-    fprintf(stderr, "Error parsing config file: %s\n", result.errmsg);
-    goto fail;
+    ret.code = LOAD_CONFIG_PARSE_ERROR;
+    ret.errmsg = strdup(result.errmsg);
+    goto end;
   }
 
   // Read global options
-  toml_datum_t mode = toml_seek(result.toptab, "mode");
-  toml_datum_t backend = toml_seek(result.toptab, "backend");
+  toml_datum_t mode = toml_seek_typed(result.toptab, "mode", TOML_STRING, &ret);
+  toml_datum_t backend =
+      toml_seek_typed(result.toptab, "backend", TOML_STRING, &ret);
 
-  // Mode
-  if (mode.type != TOML_STRING) {
-    fprintf(stderr, "Error: 'mode' must be a string in config file\n");
-    goto fail;
+  if (ret.code != LOAD_CONFIG_SUCCESS) {
+    goto end;
   }
 
+  // Mode
   if (strcmp(mode.u.s, "WAV") == 0) {
-    config.mode = MODE_WAV;
+    config->mode = MODE_WAV;
   } else {
-    fprintf(stderr, "Error: unsupported mode '%s' in config file\n", mode.u.s);
-    goto fail;
+    ret.code = LOAD_CONFIG_INVALID_OPTION_VALUE;
+    ret.errmsg = strdup(
+        "Error: unsupported mode in config file. Supported modes: \"WAV\".");
+    goto end;
   }
 
   // Backend
-  if (backend.type != TOML_STRING) {
-    fprintf(stderr, "Error: 'backend' must be a string in config file\n");
-    goto fail;
-  }
   if (strcmp(backend.u.s, "PIPEWIRE") == 0) {
-    config.backend = BACKEND_PIPEWIRE;
+    config->backend = BACKEND_PIPEWIRE;
   } else {
-    fprintf(stderr, "Error: unsupported backend '%s' in config file\n",
-            backend.u.s);
-    goto fail;
+    ret.code = LOAD_CONFIG_INVALID_OPTION_VALUE;
+    ret.errmsg =
+        strdup("Error: unsupported backend in config file. Supported backends: "
+               "\"PIPEWIRE\".");
+    goto end;
   }
 
-  switch (config.mode) {
+  switch (config->mode) {
   case MODE_WAV: {
-    toml_datum_t sample_path = toml_seek(result.toptab, "wav.sample_path");
-    toml_datum_t step_seq_path = toml_seek(result.toptab, "wav.step_seq_path");
+    toml_datum_t sample_path =
+        toml_seek_typed(result.toptab, "wav.sample_path", TOML_STRING, &ret);
+    toml_datum_t step_seq_path =
+        toml_seek_typed(result.toptab, "wav.step_seq_path", TOML_STRING, &ret);
 
-    if (sample_path.type != TOML_STRING) {
-      fprintf(stderr, "Error: 'wav.sample_path' must be a string\n");
-      goto fail;
-    }
-    if (step_seq_path.type != TOML_STRING) {
-      fprintf(stderr, "Error: 'wav.step_seq_path' must be a string\n");
-      goto fail;
+    if (ret.code != LOAD_CONFIG_SUCCESS) {
+      goto end;
     }
 
-    config.options.wav.sample_path = strdup(sample_path.u.s);
-    config.options.wav.step_seq_path = strdup(step_seq_path.u.s);
+    config->options.wav.sample_path = strdup(sample_path.u.s);
+    config->options.wav.step_seq_path = strdup(step_seq_path.u.s);
     break;
   }
   }
 
+end:
   toml_free(result);
-  return config;
+  return ret;
+}
 
-fail:
-  toml_free(result);
-  exit(EXIT_FAILURE);
+load_config_result_t load_config(Config *config) {
+  // TODO: look for it in the valid XDG config paths
+  return load_config_file(config, CONFIG_FILE_PATH);
+}
+
+void free_config(Config *config) {
+  switch (config->mode) {
+  case MODE_WAV:
+    free(config->options.wav.sample_path);
+    free(config->options.wav.step_seq_path);
+    break;
+  }
 }
 
 #endif

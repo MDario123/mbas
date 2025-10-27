@@ -18,7 +18,14 @@ const int MAX_CONNECTIONS = 5;
 const char *const PLAY_COMMAND = "PLAY";
 
 int main() {
-  Config config = load_config();
+  Config config;
+  load_config_result_t res = load_config(&config);
+
+  if (res.code != LOAD_CONFIG_SUCCESS) {
+    fprintf(stderr, "Failed to load config: %s\n", res.errmsg);
+    free(res.errmsg);
+    return res.code;
+  }
 
   int sockfd = socket(AF_UNIX, SOCK_DGRAM, 0);
 
