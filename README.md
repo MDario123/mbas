@@ -11,13 +11,13 @@ Reads config from `/etc/mbas/config.toml`.
 
 #### Parameters
 
-- `MODE`: "WAV" (planned "MIDI" support in future)
-- `BACKEND`: "PIPEWIRE" (planned "ALSA" and "PULSEAUDIO" support in future)
+- `mode`: "WAV" (planned "MIDI" support in future)
+- `backend`: "PIPEWIRE" (planned "ALSA" and "PULSEAUDIO" support in future)
 
-If `MODE` is "WAV", the following parameters are used:
+If `mode` is "WAV", the following parameters are used:
 
-- `SAMPLE_PATH`: path to the WAV sample file
-- `STEP_SEQ_PATH`: path to the step sequence file
+- `wav.sample_path`: path to the WAV sample file
+- `wav.step_seq_path`: path to the step sequence file
 
 Step sequence file format:
 
