@@ -82,5 +82,6 @@ int main() {
 close_socket:
   close(sockfd);
 exit_failure:
+  free_config(&config);
   return EXIT_FAILURE;
 }
