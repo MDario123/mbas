@@ -6,14 +6,19 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include "config.c"
+
 #ifdef DEBUG
 const char *const SOCKET_PATH = "/tmp/mbas.sock";
 #else
 const char *const SOCKET_PATH = "/run/mbas.sock";
 #endif
+
 const int MAX_CONNECTIONS = 5;
+const char *const PLAY_COMMAND = "PLAY";
 
 int main() {
+  Config config = load_config();
 
   int sockfd = socket(AF_UNIX, SOCK_DGRAM, 0);
 
@@ -49,12 +54,21 @@ int main() {
       goto close_socket;
     }
 
-    recv(sockfd, buffer, 4, 0);
+    ssize_t read = recv(sockfd, buffer, 4, 0);
 
-    if (strncmp(buffer, "PLAY", 4) == 0) {
+    if (read < 0) {
+      perror("recv");
+      goto close_socket;
+    }
+
+    buffer[read] = '\0';
+
+    if (strcmp(buffer, PLAY_COMMAND) == 0) {
 #ifdef DEBUG
-      printf("Received PLAY command\n");
+      printf("Received %s command\n", PLAY_COMMAND);
 #endif
+    } else {
+      fprintf(stderr, "Received unknown command: %s", buffer);
     }
   }
 
