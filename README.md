@@ -49,4 +49,6 @@ When finished playing a step:
 
 ## Building
 
-TODO
+```sh
+make build
+```
