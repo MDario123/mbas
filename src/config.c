@@ -42,6 +42,24 @@ enum {
   LOAD_CONFIG_INVALID_OPTION_VALUE = -3,
 };
 
+char *expand_path(char *path) {
+  char *new_path;
+  if (path[0] == '~') {
+    const char *home = getenv("HOME");
+    size_t path_len = strlen(path);
+    size_t home_len = home ? strlen(home) : 0;
+    if (home) {
+      new_path = malloc(home_len + path_len);
+      strcpy(new_path, home);
+      strcat(new_path, path + 1);
+      free(path);
+    } else {
+      new_path = path;
+    }
+  }
+  return new_path;
+}
+
 toml_datum_t toml_seek_typed(toml_datum_t root, const char *option_name,
                              toml_type_t exp_type, load_config_result_t *ret) {
   toml_datum_t datum = toml_seek(root, option_name);
@@ -121,7 +139,11 @@ load_config_result_t load_config_file(Config *config, const char *path) {
     }
 
     config->options.wav.sample_path = strdup(sample_path.u.s);
+    config->options.wav.sample_path =
+        expand_path(config->options.wav.sample_path);
     config->options.wav.step_seq_path = strdup(step_seq_path.u.s);
+    config->options.wav.step_seq_path =
+        expand_path(config->options.wav.step_seq_path);
     break;
   }
   }
