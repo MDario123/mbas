@@ -23,7 +23,7 @@ Step sequence file format:
 
 - Each line represents a step.
 - Each line contains 2 integer values separated by whitespace. Representing the start and end sample indices to be played.
-- Lines starting with `#` are comments and should be ignored.
+- Lines starting with `#` are comments and will be ignored.
 - Blank lines should also be ignored.
 
 ## Behaviour
