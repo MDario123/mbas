@@ -17,6 +17,11 @@
         buildInputs = with pkgs; [
           clang-tools
           clang
+
+          bear
+
+          pkg-config
+          pipewire
         ];
 
         shellHook = ''
