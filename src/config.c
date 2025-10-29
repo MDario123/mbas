@@ -6,9 +6,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-const char *const CONFIG_FILE_PATH = "/etc/mbas/config.toml";
+const char *const CONFIG_FILE_PATH = "~/.config/mbas/config.toml";
 
-enum Mode { MODE_WAV = 0 };
+enum Mode { MODE_SINGLE_SAMPLE = 0 };
 enum Backend { BACKEND_PIPEWIRE = 0 };
 
 typedef enum Mode Mode;
@@ -22,7 +22,7 @@ struct Config {
     struct {
       char *sample_path;
       char *step_seq_path;
-    } wav;
+    } single_sample;
   } options;
 };
 
@@ -107,43 +107,43 @@ load_config_result_t load_config_file(Config *config, const char *path) {
   }
 
   // Mode
-  if (strcmp(mode.u.s, "WAV") == 0) {
-    config->mode = MODE_WAV;
+  if (strcmp(mode.u.s, "single_sample") == 0) {
+    config->mode = MODE_SINGLE_SAMPLE;
   } else {
     ret.code = LOAD_CONFIG_INVALID_OPTION_VALUE;
-    ret.errmsg = strdup(
-        "Error: unsupported mode in config file. Supported modes: \"WAV\".");
+    ret.errmsg = strdup("Error: unsupported mode in config file. Supported "
+                        "modes: \"single_sample\".");
     goto end;
   }
 
   // Backend
-  if (strcmp(backend.u.s, "PIPEWIRE") == 0) {
+  if (strcmp(backend.u.s, "pipewire") == 0) {
     config->backend = BACKEND_PIPEWIRE;
   } else {
     ret.code = LOAD_CONFIG_INVALID_OPTION_VALUE;
     ret.errmsg =
         strdup("Error: unsupported backend in config file. Supported backends: "
-               "\"PIPEWIRE\".");
+               "\"pipewire\".");
     goto end;
   }
 
   switch (config->mode) {
-  case MODE_WAV: {
-    toml_datum_t sample_path =
-        toml_seek_typed(result.toptab, "wav.sample_path", TOML_STRING, &ret);
-    toml_datum_t step_seq_path =
-        toml_seek_typed(result.toptab, "wav.step_seq_path", TOML_STRING, &ret);
+  case MODE_SINGLE_SAMPLE: {
+    toml_datum_t sample_path = toml_seek_typed(
+        result.toptab, "single_sample.sample_path", TOML_STRING, &ret);
+    toml_datum_t step_seq_path = toml_seek_typed(
+        result.toptab, "single_sample.step_seq_path", TOML_STRING, &ret);
 
     if (ret.code != LOAD_CONFIG_SUCCESS) {
       goto end;
     }
 
-    config->options.wav.sample_path = strdup(sample_path.u.s);
-    config->options.wav.sample_path =
-        expand_path(config->options.wav.sample_path);
-    config->options.wav.step_seq_path = strdup(step_seq_path.u.s);
-    config->options.wav.step_seq_path =
-        expand_path(config->options.wav.step_seq_path);
+    config->options.single_sample.sample_path = strdup(sample_path.u.s);
+    config->options.single_sample.sample_path =
+        expand_path(config->options.single_sample.sample_path);
+    config->options.single_sample.step_seq_path = strdup(step_seq_path.u.s);
+    config->options.single_sample.step_seq_path =
+        expand_path(config->options.single_sample.step_seq_path);
     break;
   }
   }
@@ -155,14 +155,17 @@ end:
 
 load_config_result_t load_config(Config *config) {
   // TODO: look for it in the valid XDG config paths
-  return load_config_file(config, CONFIG_FILE_PATH);
+  char *config_path = expand_path(strdup(CONFIG_FILE_PATH));
+  load_config_result_t conf = load_config_file(config, config_path);
+  free(config_path);
+  return conf;
 }
 
 void free_config(Config *config) {
   switch (config->mode) {
-  case MODE_WAV:
-    free(config->options.wav.sample_path);
-    free(config->options.wav.step_seq_path);
+  case MODE_SINGLE_SAMPLE:
+    free(config->options.single_sample.sample_path);
+    free(config->options.single_sample.step_seq_path);
     break;
   }
 }

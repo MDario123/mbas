@@ -14,8 +14,8 @@ typedef struct Data Data;
 Data data_from_config_wav(const Config *config) {
   Data data = {0};
 
-  const char *sample_path = config->options.wav.sample_path;
-  const char *step_seq_path = config->options.wav.step_seq_path;
+  const char *sample_path = config->options.single_sample.sample_path;
+  const char *step_seq_path = config->options.single_sample.step_seq_path;
 
   // Load sample file
   // Expected to be raw f32le mono
@@ -106,7 +106,7 @@ exit_failure:
 
 Data data_from_config(const Config *config) {
   switch (config->mode) {
-  case MODE_WAV: {
+  case MODE_SINGLE_SAMPLE: {
     return data_from_config_wav(config);
   }
   default:
