@@ -1,4 +1,6 @@
+#include <fcntl.h>
 #include <poll.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,7 +8,14 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <pipewire/pipewire.h>
+#include <spa/param/audio/format-utils.h>
+#include <spa/utils/result.h>
+
 #include "config.c"
+#include "data.c"
+#include "pipewire/stream.h"
+#include "spa/param/audio/raw.h"
 
 #ifdef DEBUG
 const char *const SOCKET_PATH = "/tmp/mbas.sock";
@@ -14,126 +23,145 @@ const char *const SOCKET_PATH = "/tmp/mbas.sock";
 const char *const SOCKET_PATH = "/run/mbas.sock";
 #endif
 
-const int MAX_CONNECTIONS = 5;
 const char *const PLAY_COMMAND = "PLAY";
 
-struct Data {
-  int16_t *sample;
-  size_t sample_length;
+const int DEFAULT_RATE = 44100;
+const int DEFAULT_CHANNELS = 1;
 
-  size_t *step_sequence_l;
-  size_t *step_sequence_r;
-  size_t step_sequence_length;
+struct event_loop_data {
+  struct pw_main_loop *loop;
+  struct pw_stream *stream;
+
+  size_t current_step;
+  size_t current_step_pos;
+  bool play_next;
+
+  Data data;
 };
 
-typedef struct Data Data;
+typedef struct event_loop_data event_loop_data;
 
-Data data_from_config_wav(const Config *config) {
-  Data data = {0};
-
-  const char *sample_path = config->options.wav.sample_path;
-  const char *step_seq_path = config->options.wav.step_seq_path;
-
-  // Load sample file
-  // Expected to be raw LPCM 16-bit little-endian mono
-  FILE *sample_file = fopen(sample_path, "rb");
-
-  if (!sample_file) {
-    fprintf(stderr, "Failed to open sample file: %s\n", sample_path);
-    goto exit_failure;
-  }
-
-  fseek(sample_file, 0, SEEK_END);
-  size_t sample_size = ftell(sample_file);
-  rewind(sample_file);
-
-  data.sample_length = sample_size / sizeof(int16_t);
-  data.sample = (int16_t *)malloc(sample_size);
-
-  unsigned long res =
-      fread(data.sample, sizeof(int16_t), data.sample_length, sample_file);
-  if (res != data.sample_length) {
-    fprintf(stderr, "Failed to read sample data from file: %s\n", sample_path);
-    goto close_sample_file;
-  }
-
-  fclose(sample_file);
-
-  // Load step sequence file
-  FILE *step_seq_file = fopen(step_seq_path, "r");
-
-  if (!step_seq_file) {
-    fprintf(stderr, "Failed to open step sequence file: %s\n", step_seq_path);
-    goto free_sample;
-  }
-
-  // First, count the number of steps
-  // Count the amount of lines that are not empty or comments
-  data.step_sequence_length = 0;
-  char line[256];
-  while (fgets(line, sizeof(line), step_seq_file)) {
-    // Skip empty lines and comments
-    if (line[0] == '\n' || line[0] == '#' || line[0] == '\r') {
-      continue;
-    }
-    data.step_sequence_length++;
-  }
-  rewind(step_seq_file);
-  data.step_sequence_l =
-      (size_t *)malloc(data.step_sequence_length * sizeof(size_t));
-  data.step_sequence_r =
-      (size_t *)malloc(data.step_sequence_length * sizeof(size_t));
-  size_t real_index = 0;
-  size_t index = 0;
-  while (fgets(line, sizeof(line), step_seq_file)) {
-    real_index++;
-    // Skip empty lines and comments
-    if (line[0] == '\n' || line[0] == '#' || line[0] == '\r') {
-      continue;
-    }
-
-    size_t step_l = 0;
-    size_t step_r = 0;
-
-    int scanned = sscanf(line, "%zu %zu", &step_l, &step_r);
-
-    if (scanned != 2) {
-      fprintf(stderr, "Invalid step sequence format in file: %s at line %zu\n",
-              step_seq_path, real_index);
-      goto free_step_sequence;
-    }
-
-    data.step_sequence_l[index] = step_l;
-    data.step_sequence_r[index] = step_r;
-    index++;
-  }
-
-  return data;
-
-free_step_sequence:
-  free(data.step_sequence_l);
-  free(data.step_sequence_r);
-free_sample:
-  free(data.sample);
-close_sample_file:
-  fclose(sample_file);
-exit_failure:
-  exit(EXIT_FAILURE);
+void init_event_loop_data(event_loop_data *data) {
+  data->current_step = 0;
+  data->current_step_pos = data->data.step_sequence_r[0];
+  data->play_next = false;
 }
 
-Data data_from_config(const Config *config) {
-  switch (config->mode) {
-  case MODE_WAV: {
-    return data_from_config_wav(config);
+static int stop_stream(struct spa_loop *loop, bool async, uint32_t seq,
+                       const void *_data, size_t size, void *userdata) {
+  event_loop_data *d = userdata;
+  pw_stream_set_active(d->stream, false);
+
+  return 0;
+}
+
+void on_process(void *userdata) {
+  bool should_stop = false;
+  event_loop_data *data = userdata;
+
+  struct pw_buffer *b;
+  struct spa_buffer *buf;
+  uint32_t n_frames, stride, pending_frames;
+  uint8_t *p;
+
+  if ((b = pw_stream_dequeue_buffer(data->stream)) == NULL) {
+    pw_log_warn("out of buffers: %m");
+    return;
   }
-  default:
-    fprintf(stderr,
-            "Unsupported mode in config. This should not be possible.\n");
-    exit(EXIT_FAILURE);
+
+  buf = b->buffer;
+  if ((p = buf->datas[0].data) == NULL)
+    return;
+
+  stride = sizeof(int32_t) * DEFAULT_CHANNELS;
+  n_frames = buf->datas[0].maxsize / stride;
+  if (b->requested)
+    n_frames = SPA_MIN((int)b->requested, n_frames);
+
+  pending_frames = n_frames;
+  for (int i = 0; i < 2; i++) {
+    size_t available_frames =
+        data->data.step_sequence_r[data->current_step] - data->current_step_pos;
+    size_t copy_frames = SPA_MIN(available_frames, pending_frames);
+
+    memcpy(p + (n_frames - pending_frames) * stride,
+           &data->data.sample[data->current_step_pos], copy_frames * stride);
+
+    pending_frames -= copy_frames;
+    data->current_step_pos += copy_frames;
+
+    if (data->current_step_pos ==
+        data->data.step_sequence_r[data->current_step]) {
+      if (!data->play_next) {
+        data->current_step = 0;
+        data->current_step_pos = data->data.step_sequence_r[0];
+        should_stop = true;
+        break;
+      }
+      if (data->current_step == data->data.step_sequence_length - 1) {
+        data->current_step = 0;
+        data->current_step_pos = data->data.step_sequence_l[0];
+      } else {
+        data->current_step = data->current_step + 1;
+        data->current_step_pos = data->data.step_sequence_l[data->current_step];
+      }
+      data->play_next = false;
+    }
   }
+
+  // Fill remaining with silence if needed
+  if (pending_frames > 0) {
+    memset(p + (n_frames - pending_frames) * stride, 0,
+           pending_frames * stride);
+  }
+
+  buf->datas[0].chunk->offset = 0;
+  buf->datas[0].chunk->stride = stride;
+  buf->datas[0].chunk->size = n_frames * stride;
+
+  pw_stream_queue_buffer(data->stream, b);
+
+  if (should_stop) {
+    pw_loop_invoke(pw_main_loop_get_loop(data->loop), stop_stream, 0, NULL, 0,
+                   false, userdata);
+  }
+}
+
+void on_msg(void *userdata, int fd, uint32_t mask) {
+  event_loop_data *data = userdata;
+  char buffer[256];
+  ssize_t n = recv(fd, buffer, sizeof(buffer) - 1, 0);
+
+  if (n < 0) {
+    perror("recv");
+    return;
+  }
+
+  buffer[n] = '\0';
+  if (strncmp(buffer, PLAY_COMMAND, 4) == 0) {
+    // Start playback
+    printf("Received PLAY command\n");
+    int res = pw_stream_set_active(data->stream, true);
+    data->play_next = true;
+  } else {
+    fprintf(stderr, "Unknown command received: %s\n", buffer);
+  }
+
+  return;
+}
+
+static const struct pw_stream_events stream_events = {
+    PW_VERSION_STREAM_EVENTS,
+    .process = on_process,
+};
+
+static void do_quit(void *userdata, int signal_number) {
+  event_loop_data *data = userdata;
+  pw_main_loop_quit(data->loop);
 }
 
 int main() {
+  // Load configuration
   Config config;
   load_config_result_t res = load_config(&config);
 
@@ -143,8 +171,11 @@ int main() {
     return res.code;
   }
 
-  Data data = data_from_config(&config);
+  // Initialize data from config
+  Data internal_data = data_from_config(&config);
+  free_config(&config);
 
+  // Setup UNIX domain socket server
   int sockfd = socket(AF_UNIX, SOCK_DGRAM, 0);
 
   if (sockfd < 0) {
@@ -165,42 +196,91 @@ int main() {
     goto close_socket;
   }
 
-  printf("Server is listening on %s\n", SOCKET_PATH);
-
-  struct pollfd pfd = {sockfd, POLLIN, 0};
-
-  char buffer[8];
-
-  while (1) {
-    int poll_count = poll(&pfd, 1, -1);
-
-    if (poll_count < 0) {
-      perror("poll");
-      goto close_socket;
-    }
-
-    ssize_t read = recv(sockfd, buffer, 4, 0);
-
-    if (read < 0) {
-      perror("recv");
-      goto close_socket;
-    }
-
-    buffer[read] = '\0';
-
-    if (strcmp(buffer, PLAY_COMMAND) == 0) {
-#ifdef DEBUG
-      printf("Received %s command\n", PLAY_COMMAND);
-#endif
-      printf("Sample Length: %zu\n", data.sample_length);
-    } else {
-      fprintf(stderr, "Received unknown command: %s", buffer);
-    }
+  // Set socket to non-blocking
+  int flags = fcntl(sockfd, F_GETFL, 0);
+  if (flags == -1) {
+    perror("fcntl");
+    goto close_socket;
+  }
+  flags |= O_NONBLOCK;
+  if (fcntl(sockfd, F_SETFL, flags) == -1) {
+    perror("fcntl");
+    goto close_socket;
   }
 
+  printf("Server is listening on %s\n", SOCKET_PATH);
+
+  // TODO: Make backend variable
+  // Initialize audio backend
+  event_loop_data data;
+  data.data = internal_data;
+  init_event_loop_data(&data);
+
+  const struct spa_pod *params[1];
+  uint8_t buffer[1024];
+  struct spa_pod_builder b = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
+
+  pw_init(0, 0);
+
+  data.loop = pw_main_loop_new(0 /* properties */);
+
+  // Set handlers for SIGINT and SIGTERM to stop the main loop
+  pw_loop_add_signal(pw_main_loop_get_loop(data.loop), SIGINT, do_quit, &data);
+  pw_loop_add_signal(pw_main_loop_get_loop(data.loop), SIGTERM, do_quit, &data);
+
+  data.stream = pw_stream_new_simple(
+      pw_main_loop_get_loop(data.loop), "Music Box Audio Service",
+      pw_properties_new(
+          PW_KEY_MEDIA_TYPE, "Audio",        // Clearly we want to play audio
+          PW_KEY_MEDIA_CATEGORY, "Playback", // Simple playback stream
+          PW_KEY_MEDIA_ROLE, "Notification", // Original purpose
+          NULL                               // End of properties
+          ),
+      &stream_events, &data);
+
+  /* Make one parameter with the supported formats. The SPA_PARAM_EnumFormat
+   * id means that this is a format enumeration (of 1 value). */
+  params[0] = spa_format_audio_raw_build(
+      &b, SPA_PARAM_EnumFormat,
+      &SPA_AUDIO_INFO_RAW_INIT(.format = SPA_AUDIO_FORMAT_F32_LE,
+                               .channels = DEFAULT_CHANNELS,
+                               .rate = DEFAULT_RATE));
+
+  /* Now connect this stream. We ask that our process function is
+   * called in a realtime thread. */
+  int res_con = pw_stream_connect(data.stream, PW_DIRECTION_OUTPUT, PW_ID_ANY,
+                                  PW_STREAM_FLAG_AUTOCONNECT |
+                                      PW_STREAM_FLAG_MAP_BUFFERS |
+                                      PW_STREAM_FLAG_INACTIVE,
+                                  params, 1);
+
+  if (res_con < 0) {
+    fprintf(stderr, "Failed to connect stream: %s\n", spa_strerror(res_con));
+    goto cleanup_backend;
+  }
+
+  // Register socket fd with the main loop
+  struct spa_source *source =
+      pw_loop_add_io(pw_main_loop_get_loop(data.loop), sockfd, SPA_IO_IN, false,
+                     on_msg, &data);
+
+  // Finally!!!
+  // Run the main loop
+  pw_main_loop_run(data.loop);
+
+  // Cleanup
+  pw_stream_destroy(data.stream);
+  pw_main_loop_destroy(data.loop);
+  pw_deinit();
+  close(sockfd);
+  return EXIT_SUCCESS;
+
+cleanup_backend:
+  pw_stream_destroy(data.stream);
+  pw_main_loop_destroy(data.loop);
+  pw_deinit();
 close_socket:
   close(sockfd);
 exit_failure:
-  free_config(&config);
   return EXIT_FAILURE;
 }
