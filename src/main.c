@@ -17,11 +17,7 @@
 #include "pipewire/stream.h"
 #include "spa/param/audio/raw.h"
 
-#ifdef DEBUG
 const char *const SOCKET_PATH = "/tmp/mbas.sock";
-#else
-const char *const SOCKET_PATH = "/run/mbas.sock";
-#endif
 
 const char *const PLAY_COMMAND = "PLAY";
 
@@ -42,8 +38,7 @@ struct event_loop_data {
 typedef struct event_loop_data event_loop_data;
 
 void init_event_loop_data(event_loop_data *data) {
-  data->current_step = 0;
-  data->current_step_pos = data->data.step_sequence_r[0];
+  data->current_step = data->data.step_sequence_length;
   data->play_next = false;
 }
 
@@ -79,7 +74,22 @@ void on_process(void *userdata) {
     n_frames = SPA_MIN((int)b->requested, n_frames);
 
   pending_frames = n_frames;
-  for (int i = 0; i < 2; i++) {
+
+  if (data->current_step == data->data.step_sequence_length) {
+    if (data->play_next) {
+      data->current_step = 0;
+      data->current_step_pos = data->data.step_sequence_l[0];
+      data->play_next = false;
+    } else {
+      data->current_step = 0;
+      data->current_step_pos = data->data.step_sequence_r[0];
+    }
+  }
+
+  while (pending_frames > 0 &&
+         (data->current_step_pos <
+              data->data.step_sequence_r[data->current_step] ||
+          data->play_next)) {
     size_t available_frames =
         data->data.step_sequence_r[data->current_step] - data->current_step_pos;
     size_t copy_frames = SPA_MIN(available_frames, pending_frames);
@@ -93,8 +103,7 @@ void on_process(void *userdata) {
     if (data->current_step_pos ==
         data->data.step_sequence_r[data->current_step]) {
       if (!data->play_next) {
-        data->current_step = 0;
-        data->current_step_pos = data->data.step_sequence_r[0];
+        data->current_step = data->data.step_sequence_length;
         should_stop = true;
         break;
       }

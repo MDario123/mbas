@@ -86,6 +86,12 @@ Data data_from_config_wav(const Config *config) {
       goto free_step_sequence;
     }
 
+    if (step_l > step_r || step_r > data.sample_length) {
+      fprintf(stderr, "Invalid step sequence values in file: %s at line %zu\n",
+              step_seq_path, real_index);
+      goto free_step_sequence;
+    }
+
     data.step_sequence_l[index] = step_l;
     data.step_sequence_r[index] = step_r;
     index++;

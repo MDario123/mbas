@@ -6,18 +6,18 @@ Receives `PLAY` signals on `/run/mbas.sock`.
 
 ### Configuration
 
-Reads config from `/etc/mbas/config.toml`.
+Reads config from `~/.config/mbas/config.toml`.
 [TOML specification](https://toml.io/en/v1.0.0)
 
 #### Parameters
 
-- `mode`: "WAV" (planned "MIDI" support in future)
-- `backend`: "PIPEWIRE" (planned "ALSA" and "PULSEAUDIO" support in future)
+- `mode`: "single_sample" (planned "multi_sample" support)
+- `backend`: "pipewire" (planned "pulseaudio" support)
 
-If `mode` is "WAV", the following parameters are used:
+If `mode` is "single_sample", the following parameters are used:
 
-- `wav.sample_path`: path to the WAV sample file
-- `wav.step_seq_path`: path to the step sequence file
+- `single_sample.sample_path`: path to the f32le 44100Hz mono sample file (using ffmpeg you can do something like `ffmpeg -i input.wav -f f32le -ar 44100 -ac 1 output.raw`)
+- `single_sample.step_seq_path`: path to the step sequence file
 
 Step sequence file format:
 
@@ -55,7 +55,10 @@ make build
 
 ## TODO
 
+- [x] Implement WAV mode with PipeWire backend.
+- [ ] Read sample from more audio formats. (probably via libsndfile)
 - [ ] Implement MIDI mode.
-- [ ] Implement ALSA and PulseAudio backends.
+- [ ] Implement PulseAudio backend.
 - [ ] Add error handling and logging.
+- [ ] Read config from valid xdg paths.
 - [ ] Add hot-reloading of configuration.
