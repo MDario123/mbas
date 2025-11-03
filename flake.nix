@@ -28,5 +28,27 @@
           export SHELL=zsh
         '';
       };
+
+      packages.${system} = rec {
+        default = mbas;
+
+        mbas = pkgs.stdenv.mkDerivation {
+          name = "mbas";
+
+          src = ./.;
+
+          buildInputs = with pkgs; [
+            pkg-config
+            pipewire
+          ];
+
+
+          buildPhase = "make";
+          installPhase = ''
+            mkdir -p $out/bin
+            cp bin/mbas $out/bin/
+          '';
+        };
+      };
     };
 }
