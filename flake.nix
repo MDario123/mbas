@@ -32,7 +32,7 @@
       packages.${system} = rec {
         default = mbas;
 
-        mbas = pkgs.stdenv.mkDerivation {
+        mbas = pkgs.lib.makeOverridable pkgs.stdenv.mkDerivation {
           name = "mbas";
 
           src = ./.;
