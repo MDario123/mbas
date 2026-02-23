@@ -43,7 +43,8 @@
           ];
 
 
-          buildPhase = "make";
+          build = "RELEASE";
+          buildPhase = "make BUILD=$build";
           installPhase = ''
             mkdir -p $out/bin
             cp bin/mbas $out/bin/
